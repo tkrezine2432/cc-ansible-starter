@@ -1,0 +1,13 @@
+# Copy this file to inventory.ini, then fill in your own values.
+#
+# Use each server's PRIVATE address. Private addresses stay the same when a
+# server stops and starts; public addresses do not.
+
+[appservers]
+REPLACE-WITH-APP-SERVER-PRIVATE-IP
+
+[all:vars]
+# The login name on your servers. On our Ubuntu hosts this is "ubuntu".
+ansible_user=REPLACE-WITH-LOGIN-NAME
+# Path to the private key ON THE CONTROL NODE. The key itself never goes in this repository.
+ansible_ssh_private_key_file=~/REPLACE-WITH-KEY-FILE.pem

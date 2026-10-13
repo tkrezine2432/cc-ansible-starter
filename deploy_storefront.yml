@@ -1,0 +1,130 @@
+---
+# deploy_storefront.yml
+# Deploys the storefront app (files/store.py) as a container on every app server.
+# Maintained by the storefront vendor. Tested on our Ubuntu 22.04 / 24.04 hosts.
+#
+# Run:   ansible-playbook -i inventory.ini deploy_storefront.yml
+# You will be asked for the database password. It is used for this run only
+# and is never written to this repository.
+
+- name: Deploy the storefront app
+  hosts: appservers
+  become: true                      # the container engine needs administrator rights
+
+  vars_prompt:
+    - name: db_password
+      prompt: "Database password (typed, never stored)"
+      private: true                 # nothing echoes to the screen
+
+  vars:
+    app_dir: /opt/storefront        # where the app lives ON THE SERVER
+    image: cc-storefront:v2         # the image this playbook builds
+    container: storefront-1         # the container this playbook manages
+
+  pre_tasks:
+    # Stops the run with a plain message if the settings were never filled in.
+    - name: Check the settings file has been filled in
+      ansible.builtin.assert:
+        that:
+          - "'REPLACE' not in db_host"
+          - "'REPLACE' not in db_user"
+        fail_msg: "Edit group_vars/appservers.yml: set db_host to your database endpoint and db_user to your database login."
+        quiet: true
+
+  tasks:
+    # The container engine. Everything below depends on it.
+    - name: Install the container engine
+      ansible.builtin.apt:
+        name: docker.io
+        state: present
+        update_cache: true
+
+    # Running now, and started again automatically whenever the server boots.
+    - name: Keep the container engine running and enabled at boot
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Create the app folder
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        mode: "0755"
+
+    # The code and the recipe come from THIS repository. The repository copy is the truth.
+    - name: Copy the app code
+      ansible.builtin.copy:
+        src: files/store.py
+        dest: "{{ app_dir }}/store.py"
+        mode: "0644"
+      register: app_code
+
+    - name: Copy the image recipe
+      ansible.builtin.copy:
+        src: files/Dockerfile
+        dest: "{{ app_dir }}/Dockerfile"
+        mode: "0644"
+      register: app_recipe
+
+    # The settings file the container reads at start-up. It holds the password, so it is
+    # readable by root only, and no_log keeps the password out of the run's output.
+    - name: Write the database settings file
+      ansible.builtin.copy:
+        dest: "{{ app_dir }}/db.env"
+        content: |
+          DB_HOST={{ db_host }}
+          DB_USER={{ db_user }}
+          DB_PASS={{ db_password }}
+          DB_NAME={{ db_name }}
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      register: app_settings
+
+    # A question, not a change.
+    - name: Check whether the image already exists
+      ansible.builtin.command: docker images -q {{ image }}
+      register: image_check
+      changed_when: false
+
+    # Build only when the image is missing or its code or recipe changed.
+    - name: Build the image
+      ansible.builtin.command: docker build -t {{ image }} {{ app_dir }}
+      when: image_check.stdout == "" or app_code is changed or app_recipe is changed
+      register: image_build
+
+    - name: Check whether the container is running from this image
+      ansible.builtin.command: >-
+        docker ps -q --filter "name=^{{ container }}$" --filter "ancestor={{ image }}"
+      register: container_check
+      changed_when: false
+
+    # Replace the container only when it is missing, or its image or settings changed.
+    - name: Start the container
+      ansible.builtin.shell: |
+        docker rm -f {{ container }} >/dev/null 2>&1 || true
+        docker run -d --name {{ container }} \
+          --env-file {{ app_dir }}/db.env \
+          -e SERVED_BY={{ ansible_hostname }} \
+          -p 80:8080 {{ image }}
+      when: container_check.stdout == "" or image_build is changed or app_settings is changed
+
+    # Proof from the server itself: the page answers and shows prices.
+    - name: Check the store answers
+      ansible.builtin.uri:
+        url: http://localhost/
+        return_content: true
+      register: page
+      retries: 5
+      delay: 3
+      until: page.status == 200
+      changed_when: false
+
+    - name: Check the page shows the price list
+      ansible.builtin.assert:
+        that:
+          - "'Price List' in page.content"
+        fail_msg: "The store answered but showed no price list. Is the database running?"
+        quiet: true

@@ -1,0 +1,6 @@
+# Settings for the app servers. Nothing secret lives here.
+# The password is asked for when the playbook runs, and is never written to this repository.
+
+db_host: REPLACE-WITH-YOUR-DATABASE-ENDPOINT
+db_user: REPLACE-WITH-YOUR-DATABASE-LOGIN
+db_name: curdstore
