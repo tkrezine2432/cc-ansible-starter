@@ -1,0 +1,9 @@
+   # Credentials never belong in a repository.
+   *.pem
+   *.ppk
+   *.key
+   db.env
+   *.env
+   .vault_pass*
+   # Ansible run leftovers
+   *.retry
